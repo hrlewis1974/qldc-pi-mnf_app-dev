@@ -1,6 +1,0 @@
-plotly
-yfinance
-pandas
-shiny
-shinywidgets
-faicons
