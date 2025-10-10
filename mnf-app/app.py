@@ -2,21 +2,24 @@ from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
-import yfinance as yf
 from faicons import icon_svg
 from shiny import App, Inputs, Outputs, Session, reactive, render, ui
 from shinywidgets import output_widget, render_plotly
-from stocks import stocks
-
-# Default to the last 12 weeks
-end = pd.Timestamp.now()
-start = end - pd.Timedelta(weeks=12)
 
 app_dir = Path(__file__).parent
+data_path = app_dir / "data.csv"
 
+# Load data
+data_all = pd.read_csv(data_path)
+data_all['Date'] = pd.to_datetime(data_all['Date'], format="%d/%m/%Y")
+tickers = data_all["Ticker"].unique().tolist() if "Ticker" in data_all.columns else ["LOCAL"]
+end = data_all["Date"].max()
+start = end - pd.Timedelta(weeks=12)
+
+# --- UI ---
 app_ui = ui.page_sidebar(
     ui.sidebar(
-        ui.input_selectize("ticker", "Select Stocks", choices=stocks, selected="AAPL"),
+        ui.input_selectize("ticker", "Select DMA", choices=tickers, selected=tickers[0]),
         ui.input_date_range("dates", "Select dates", start=start, end=end),
     ),
     ui.layout_column_wrap(
@@ -50,36 +53,44 @@ app_ui = ui.page_sidebar(
         col_widths=[9, 3],
     ),
     ui.include_css(app_dir / "styles.css"),
-    title="Stock explorer",
+    title="Stock explorer (Local CSV)",
     fillable=True,
 )
 
-
+# --- Server logic ---
 def server(input: Inputs, output: Outputs, session: Session):
-    @reactive.calc
-    def get_ticker():
-        return yf.Ticker(input.ticker())
-
     @reactive.calc
     def get_data():
         dates = input.dates()
-        return get_ticker().history(start=dates[0], end=dates[1])
+        df = data_all.copy()
+
+        # Filter by ticker if column exists
+        if "Ticker" in df.columns:
+            df = df[df["Ticker"] == input.ticker()]
+
+        # Filter by selected date range
+        mask = (df["Date"] >= pd.to_datetime(dates[0])) & (df["Date"] <= pd.to_datetime(dates[1]))
+        df = df.loc[mask].sort_values("Date")
+
+        return df
 
     @reactive.calc
     def get_change():
         close = get_data()["Close"]
-        return close.iloc[-1] - close.iloc[-2]
+        return close.iloc[-1] - close.iloc[-2] if len(close) > 1 else 0
 
     @reactive.calc
     def get_change_percent():
         close = get_data()["Close"]
-        change = close.iloc[-1] - close.iloc[-2]
-        return change / close.iloc[-2] * 100
+        if len(close) > 1:
+            change = close.iloc[-1] - close.iloc[-2]
+            return change / close.iloc[-2] * 100
+        return 0
 
     @render.ui
     def price():
         close = get_data()["Close"]
-        return f"{close.iloc[-1]:.2f}"
+        return f"{close.iloc[-1]:.2f}" if not close.empty else "N/A"
 
     @render.ui
     def change():
@@ -98,7 +109,7 @@ def server(input: Inputs, output: Outputs, session: Session):
 
     @render_plotly
     def price_history():
-        df = get_data().reset_index()
+        df = get_data().reset_index(drop=True)
         fig = go.Figure(
             data=[
                 go.Candlestick(
@@ -113,23 +124,21 @@ def server(input: Inputs, output: Outputs, session: Session):
                 )
             ]
         )
-        df["SMA"] = df["Close"].rolling(window=7).mean()
-        fig.add_scatter(
-            x=df["Date"],
-            y=df["SMA"],
-            mode="lines",
-            name="SMA (7)",
-            line={"color": "orange", "dash": "dash"},
-        )
+
+        # Add simple moving average
+        if len(df) >= 7:
+            df["SMA"] = df["Close"].rolling(window=7).mean()
+            fig.add_scatter(
+                x=df["Date"],
+                y=df["SMA"],
+                mode="lines",
+                name="SMA (7)",
+                line={"color": "orange", "dash": "dash"},
+            )
+
         fig.update_layout(
             hovermode="x unified",
-            legend={
-                "orientation": "h",
-                "yanchor": "top",
-                "y": 1,
-                "xanchor": "right",
-                "x": 1,
-            },
+            legend={"orientation": "h", "yanchor": "top", "y": 1, "xanchor": "right", "x": 1},
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
         )
@@ -137,20 +146,14 @@ def server(input: Inputs, output: Outputs, session: Session):
 
     @render.data_frame
     def latest_data():
-        data = get_data()[:1]  # Get latest row
+        df = get_data()
+        if df.empty:
+            return pd.DataFrame({"Category": [], "Value": []})
 
-        data.index = data.index.astype(str)
-        data = data.T
+        latest = df.iloc[-1:].T.reset_index()
+        latest.columns = ["Category", "Value"]
+        latest["Value"] = latest["Value"].apply(lambda v: f"{v:.2f}" if isinstance(v, (int, float)) else str(v))
+        return latest
 
-        result = pd.DataFrame(
-            {
-                "Category": data.index,
-                "Value": data.values.flatten(),  # Flatten to 1D array
-            }
-        )
-
-        # Format values
-        result["Value"] = result["Value"].apply(lambda v: f"{v:.1f}")
-        return result
 
 app = App(app_ui, server)
