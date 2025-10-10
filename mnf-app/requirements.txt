@@ -1,5 +1,4 @@
 plotly
-#yfinance
 pandas
 shiny
 shinywidgets

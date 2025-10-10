@@ -24,17 +24,17 @@ app_ui = ui.page_sidebar(
     ),
     ui.layout_column_wrap(
         ui.value_box(
-            "Current Price",
+            "Current Daily Flow",
             ui.output_ui("price"),
-            showcase=icon_svg("dollar-sign"),
+            showcase=icon_svg("gauge-high"),
         ),
         ui.value_box(
-            "Change",
+            "Weekly Change in Daily Flow",
             ui.output_ui("change"),
             showcase=ui.output_ui("change_icon"),
         ),
         ui.value_box(
-            "Percent Change",
+            "Weekly Percentage Change",
             ui.output_ui("change_percent"),
             showcase=icon_svg("percent"),
         ),
@@ -42,8 +42,8 @@ app_ui = ui.page_sidebar(
     ),
     ui.layout_columns(
         ui.card(
-            ui.card_header("Price history"),
-            output_widget("price_history"),
+            ui.card_header("Flow history"),
+            output_widget("flow_history"),
             full_screen=True,
         ),
         ui.card(
@@ -53,7 +53,7 @@ app_ui = ui.page_sidebar(
         col_widths=[9, 3],
     ),
     ui.include_css(app_dir / "styles.css"),
-    title="Stock explorer (Local CSV)",
+    title="District Meter Area - Flow Analysis",
     fillable=True,
 )
 
@@ -77,24 +77,24 @@ def server(input: Inputs, output: Outputs, session: Session):
     @reactive.calc
     def get_change():
         close = get_data()["Close"]
-        return close.iloc[-1] - close.iloc[-2] if len(close) > 1 else 0
+        return close.iloc[-1] - close.iloc[-8] if len(close) > 1 else 0
 
     @reactive.calc
     def get_change_percent():
         close = get_data()["Close"]
         if len(close) > 1:
-            change = close.iloc[-1] - close.iloc[-2]
-            return change / close.iloc[-2] * 100
+            change = close.iloc[-1] - close.iloc[-8]
+            return change / close.iloc[-8] * 100
         return 0
 
     @render.ui
     def price():
         close = get_data()["Close"]
-        return f"{close.iloc[-1]:.2f}" if not close.empty else "N/A"
+        return f"{close.iloc[-1]:.2f}m³/hr" if not close.empty else "N/A"
 
     @render.ui
     def change():
-        return f"${get_change():.2f}"
+        return f"{get_change():.2f}m³/hr"
 
     @render.ui
     def change_icon():
@@ -108,7 +108,7 @@ def server(input: Inputs, output: Outputs, session: Session):
         return f"{get_change_percent():.2f}%"
 
     @render_plotly
-    def price_history():
+    def flow_history():
         df = get_data().reset_index(drop=True)
         fig = go.Figure(
             data=[
@@ -127,7 +127,7 @@ def server(input: Inputs, output: Outputs, session: Session):
 
         # Add simple moving average
         if len(df) >= 7:
-            df["SMA"] = df["Close"].rolling(window=7).mean()
+            df["SMA"] = df["Close"].rolling(window=7, center=True).mean()
             fig.add_scatter(
                 x=df["Date"],
                 y=df["SMA"],
